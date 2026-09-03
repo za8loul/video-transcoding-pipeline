@@ -4,8 +4,8 @@ node_modules/
 # Runtime storage & conversions
 tmp/
 output/
+test_files/
 *.mp4
-!test_files/*.mkv
 
 # Logs & Environment
 *.log

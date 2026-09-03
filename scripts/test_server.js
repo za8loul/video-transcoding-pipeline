@@ -1,8 +1,10 @@
 import { createServer } from '../src/server.js';
 import fs from 'node:fs/promises';
 import path from 'node:path';
+import { ensureTestFixtures } from './fixtures.js';
 
 async function runTest() {
+    await ensureTestFixtures();
     console.log("=== Test Server: Full End-to-End Upload, Transcode, & Stream Cycle ===");
 
     const testPort = 3456;

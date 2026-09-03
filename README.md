@@ -114,6 +114,30 @@ Large_Files_Converter/
 
 ---
 
+## Sample Videos & Testing Fixtures
+
+If you need MKV sample files to test conversion speed, quality, or failure handling, you can use these resources:
+
+### 1. Download Free MKV Sample Videos
+* **FileSamples MKV Collection**: [https://filesamples.com/formats/mkv](https://filesamples.com/formats/mkv) — Various resolutions (360p to 4K) and codecs.
+* **Jellyfish High-Bitrate 1080p Sample (20 MB)**: [https://test-videos.co.uk/vids/jellyfish/mkv/1080/Jellyfish_1080_10s_20MB.mkv](https://test-videos.co.uk/vids/jellyfish/mkv/1080/Jellyfish_1080_10s_20MB.mkv) — Excellent for testing fast remuxing and H.264 playback.
+
+### 2. How to Create a Corrupted MKV (Testing Pre-Flight Failure Handling)
+To test the pre-flight validation gate and see the dark-glassmorphism **Error Modal** in action, create an invalid MKV file:
+
+* **Windows (PowerShell)**:
+  ```powershell
+  Set-Content -Path fake.mkv -Value "Corrupted non-video binary payload"
+  ```
+* **Git Bash / macOS / Linux**:
+  ```bash
+  echo "Corrupted non-video binary payload" > fake.mkv
+  ```
+
+Select this `fake.mkv` in the dashboard or run `npm test`. The system will safely reject it at the pre-flight gate without crashing and present the diagnostic error modal with full FFprobe parsing logs.
+
+---
+
 ## Automated Test Suite
 
 The repository includes a comprehensive integration test suite covering disk gates, corrupt payload rejection, queue concurrency, stall recovery, and HTTP 206 streaming:

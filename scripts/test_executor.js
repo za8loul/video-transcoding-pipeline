@@ -3,8 +3,10 @@ import fs from 'node:fs/promises';
 import { probeFile } from '../src/ffmpeg/probe.js';
 import { determineFfmpegArgs } from '../src/ffmpeg/routing.js';
 import { executeFfmpeg } from '../src/ffmpeg/executor.js';
+import { ensureTestFixtures } from './fixtures.js';
 
 async function runTests() {
+    await ensureTestFixtures();
     console.log("=== Test 1: Successful Conversion with Progress Reporting ===");
     const inputPath = path.resolve('test_files/sample_1280x720_surfing_with_audio.mkv');
     const outputPath = path.resolve('test_files/surfing_test_output.mp4');

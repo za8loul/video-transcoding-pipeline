@@ -2,8 +2,10 @@ import path from 'node:path';
 import fs from 'node:fs/promises';
 import { checkDiskSpace, assertDiskSpaceAvailable, DiskSpaceError, calculateRequiredScratchSpace } from '../src/storage/disk.js';
 import { TranscodeQueue } from '../src/queue/queue.js';
+import { ensureTestFixtures } from './fixtures.js';
 
 async function runTests() {
+    await ensureTestFixtures();
     console.log("=== Test 1: Disk Storage Gate ===");
     const diskInfo = await checkDiskSpace('.');
     console.log(`Disk check result: available=${(diskInfo.availableBytes / (1024 ** 3)).toFixed(2)} GB, hasEnoughSpace=${diskInfo.hasEnoughSpace}`);
