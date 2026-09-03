@@ -1,0 +1,197 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Large-File MKV to MP4 Transcoding Pipeline</title>
+    <meta name="description" content="Personal streaming-compatible MKV to MP4 converter with instant remuxing, dynamic faststart atom positioning, and zero-download disk saving.">
+    <link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+    <div class="container">
+        <!-- Header -->
+        <header class="header">
+            <div class="badge">
+                <span class="badge-dot"></span>
+                Personal Media Transcoder
+            </div>
+            <h1>MKV to MP4 Pipeline</h1>
+            <p>Direct local conversion & stream-optimized MP4 converter with instant remuxing, dynamic faststart atom positioning, and zero-download disk saving.</p>
+        </header>
+
+        <!-- Step 1: File Selection & Configuration Card -->
+        <section class="card" id="uploadCard">
+            <div class="dropzone" id="dropzone">
+                <svg class="drop-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.75" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
+                </svg>
+                <h3 id="dropzoneTitle">Choose an MKV video to convert</h3>
+                <p id="dropzoneSubtitle">Click to browse your computer, or drag and drop your file here</p>
+            </div>
+            <input type="file" id="fileInput" class="file-input" accept=".mkv,video/x-matroska">
+
+            <!-- Selected File Banner -->
+            <div class="file-banner hidden" id="fileBanner">
+                <div class="file-meta">
+                    <h4 id="fileName">movie.mkv</h4>
+                    <span id="filePathOrSize">C:\Movies\movie.mkv</span>
+                </div>
+                <button type="button" class="btn btn-secondary btn-sm" id="changeFileBtn">
+                    Change File
+                </button>
+            </div>
+
+            <!-- Manual File Path Option -->
+            <div class="manual-path-group" style="margin-top: 0.75rem;">
+                <button type="button" id="toggleManualPathBtn" style="background: none; border: none; color: var(--cyan-glow); font-size: 0.85rem; cursor: pointer; text-decoration: underline; padding: 0;">
+                    Or paste file path manually
+                </button>
+                <div id="manualPathContainer" class="hidden" style="margin-top: 0.5rem;">
+                    <input type="text" id="manualPathInput" class="text-input" placeholder="e.g. C:\Movies\sample.mkv">
+                </div>
+            </div>
+
+            <!-- Destination Folder Setting -->
+            <div class="form-group destination-group">
+                <label for="outputDirInput">Destination Folder (Where MP4 is saved):</label>
+                <div class="input-with-action">
+                    <input type="text" id="outputDirInput" class="text-input" value="./output" placeholder="e.g. C:\Users\Zaghloul\Desktop\Books">
+                    <button type="button" class="btn btn-secondary" id="browseFolderBtn">
+                        <svg style="width: 16px; height: 16px;" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" />
+                        </svg>
+                        Browse...
+                    </button>
+                </div>
+                <span class="input-hint">Select the destination folder. Once finished, your converted MP4 is already on your drive!</span>
+            </div>
+
+            <div style="margin-top: 1.75rem; display: flex; justify-content: flex-end;">
+                <button type="button" class="btn btn-primary btn-lg" id="startBtn">
+                    Start Conversion
+                </button>
+            </div>
+        </section>
+
+        <!-- Step 2: Progress Dashboard -->
+        <section class="card progress-card hidden" id="progressDashboard">
+            <!-- Upload Progress (only active if file is sent via browser transfer) -->
+            <div class="progress-group hidden" id="uploadProgressGroup">
+                <div class="progress-header">
+                    <div class="progress-title">
+                        <span>1. Resumable Upload</span>
+                        <span class="status-tag tag-active" id="uploadTag">Uploading</span>
+                    </div>
+                    <span id="uploadPercent">0%</span>
+                </div>
+                <div class="progress-bar-track">
+                    <div class="progress-bar-fill fill-upload" id="uploadBarFill"></div>
+                </div>
+                <div class="progress-stats">
+                    <span id="uploadStats">Starting upload...</span>
+                </div>
+            </div>
+
+            <!-- Transcoding Progress -->
+            <div class="progress-group">
+                <div class="progress-header">
+                    <div class="progress-title">
+                        <span>Conversion Pipeline</span>
+                        <span class="status-tag" id="strategyTag">Processing</span>
+                    </div>
+                    <span id="transcodePercent">0%</span>
+                </div>
+                <div class="progress-bar-track">
+                    <div class="progress-bar-fill fill-transcode" id="transcodeBarFill"></div>
+                </div>
+                <div class="progress-stats">
+                    <span id="transcodeStats">Analyzing file streams...</span>
+                </div>
+            </div>
+
+            <div style="display: flex; justify-content: flex-end; margin-top: 0.5rem;">
+                <button type="button" class="btn btn-danger" id="cancelBtn">
+                    Cancel Conversion
+                </button>
+            </div>
+        </section>
+
+        <!-- Step 3: Success & Media Player -->
+        <section class="card result-card hidden" id="resultCard">
+            <svg class="success-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+            </svg>
+            <h2>Conversion Complete!</h2>
+            <p style="color: var(--text-secondary); margin-top: 0.25rem;">Your MP4 was saved directly to your hard drive with 0 MB downloaded.</p>
+
+            <!-- Location Callout -->
+            <div class="location-banner">
+                <div class="location-info">
+                    <span class="location-label">Saved Directly On Disk:</span>
+                    <code id="outputPathDisplay">C:\Projects\Large_Files_Converter\output\movie.mp4</code>
+                </div>
+                <div class="location-actions">
+                    <button type="button" class="btn btn-sm btn-secondary" id="copyPathBtn">
+                        Copy Path
+                    </button>
+                    <button type="button" class="btn btn-sm btn-highlight" id="revealBtn">
+                        <svg style="width: 16px; height: 16px;" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 19a2 2 0 01-2-2V7a2 2 0 012-2h4l2 2h4a2 2 0 012 2v1M5 19h14a2 2 0 002-2v-5a2 2 0 00-2-2H9a2 2 0 00-2 2v5a2 2 0 01-2 2z" />
+                        </svg>
+                        Open Folder
+                    </button>
+                </div>
+            </div>
+
+            <!-- In-browser preview -->
+            <div class="video-wrapper">
+                <video id="videoPlayer" controls preload="metadata"></video>
+            </div>
+
+            <div class="action-row">
+                <a href="#" class="btn btn-secondary" id="downloadBtn" download>
+                    Download MP4 (Optional)
+                </a>
+                <button type="button" class="btn btn-primary" id="resetBtn">
+                    Convert Another File
+                </button>
+            </div>
+        </section>
+    </div>
+
+    <!-- Error Modal Dialog -->
+    <div class="modal-overlay hidden" id="errorModal">
+        <div class="modal-card">
+            <div class="modal-header">
+                <div class="error-icon-wrapper">
+                    <svg class="error-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                    </svg>
+                </div>
+                <div>
+                    <h3 id="errorModalTitle">Invalid Video File</h3>
+                    <span class="error-badge" id="errorModalBadge">Validation Failed</span>
+                </div>
+            </div>
+
+            <p class="error-description" id="errorModalMessage">
+                The selected video file is corrupted or cannot be read.
+            </p>
+
+            <!-- Collapsible technical details -->
+            <details class="error-details hidden" id="errorModalDetailsContainer">
+                <summary>View Technical Details</summary>
+                <pre class="error-details-pre" id="errorModalDetails"></pre>
+            </details>
+
+            <div class="modal-actions">
+                <button type="button" class="btn btn-primary btn-lg" id="errorModalCloseBtn">
+                    Select Another File
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <script type="module" src="/js/app.js"></script>
+</body>
+</html>

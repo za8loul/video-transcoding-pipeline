@@ -1,0 +1,21 @@
+# Dependencies
+node_modules/
+
+# Runtime storage & conversions
+tmp/
+output/
+*.mp4
+!test_files/*.mkv
+
+# Logs & Environment
+*.log
+.env
+.env.local
+
+# OS Generated
+Thumbs.db
+.DS_Store
+
+# Editor artifacts
+.vscode/
+.idea/

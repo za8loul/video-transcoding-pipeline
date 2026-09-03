@@ -1,14 +1,19 @@
 # System Design Document: Large-File MKV to MP4 Transcoding Pipeline
 
-## 0. Scale Assumption
+## 0. Scale & Architecture Assumption
 
-This system is designed for **personal / low-traffic use** (myself and one other user), not a public multi-tenant service. This assumption directly drives several decisions below — low concurrency limits, no per-user quota system, single-server storage. If this were rebuilt for public scale, storage would move to object storage (S3) and concurrency would need to be horizontally scaled across workers, not capped on one machine.
+This system is designed for **personal, workstation-class, and low-traffic local use** (single-user or local network), not a multi-tenant cloud service. This assumption directly drives key architecture decisions:
+* Concurrency is tightly throttled (1–2 workers) to protect CPU and I/O bandwidth.
+* **Dual Ingestion Paths**:
+  1. **Direct Local Path (Zero Transfer)**: Converted in-place directly on disk with zero network I/O, writing straight to a designated local folder.
+  2. **Resumable Web Upload**: Append-only single-file streaming upload for remote or browser drag-and-drop scenarios.
+* Direct host integration with native Windows File Explorer via Single-Threaded Apartment (STA) PowerShell bridges.
 
 ---
 
 ## 1. Scope and Codec Matrix
 
-The system converts video files wrapped in an **MKV (Matroska)** container into a streaming-compatible **MP4 (MPEG-4 Part 14)** container. To balance performance with hardware compatibility, the pipeline distinguishes between **remuxing** (container swap) and **transcoding** (re-encoding).
+The system converts video files wrapped in an **MKV (Matroska)** container into a stream-optimized **MP4 (MPEG-4 Part 14)** container. To maximize speed while ensuring universal hardware and browser playback, the pipeline strictly distinguishes between **remuxing** (lossless container swap) and **transcoding** (re-encoding).
 
 ### Supported Input Specs
 * **Container:** `.mkv`
@@ -19,49 +24,71 @@ The system converts video files wrapped in an **MKV (Matroska)** container into 
   * AAC (Advanced Audio Coding)
   * AC-3 / E-AC-3 (Dolby Digital / Dolby Digital Plus)
   * DTS (Digital Theater Systems)
+  * FLAC / Vorbis / Opus / MP3
 
 ### Target Output Spec
 * **Container:** `.mp4`
-* **Video Codec:** Passthrough (copy) if H.264/H.265; transcode to H.264 (`libx264`) if incompatible.
-* **Audio Codec:** AAC (`aac`, stereo/5.1 downmix) or AC-3 passthrough for hardware compatibility.
-* **Faststart:** Enabled (`-movflags +faststart`) to move the `moov` atom to the beginning of the file for immediate web/TV playback.
+* **Video Codec:** Passthrough (`-c:v copy`) if H.264/H.265 with safe profile and pixel format; re-encode to H.264 (`-c:v libx264 -preset veryfast -crf 20 -pix_fmt yuv420p`) if incompatible.
+* **Audio Codec:** Passthrough (`-c:a copy`) only if explicitly whitelisted; transcode to AAC (`-c:a aac -b:a 192k`) otherwise. Supports silent videos (`-an`).
+* **Faststart:** Enabled (`-movflags +faststart`) to relocate the `moov` atom to the beginning of the file for instant streaming and seek operations.
 
-### Execution Strategy
-* **Fast Path (Remuxing):** Video stream is copied (`-c:v copy`) only if codec is H.264/H.265 **AND** profile is in {Baseline, Main, High} **AND** `pix_fmt` is `yuv420p`. Audio stream is copied (`-c:a copy`) only if codec is explicitly AAC, AC-3, or E-AC-3. Both conditions must hold independently — video and audio are routed separately, not as a single combined decision. Target duration: < 30 seconds for a 25GB file (I/O bound).
-* **Slow Path (Partial Transcode):** If video qualifies for copy but audio does not (e.g. DTS, Vorbis, or any codec outside the supported set), copy video (`-c:v copy`) and transcode audio only (`-c:a aac`). Target duration: 1–3 minutes.
-* **Full Transcode:** If video codec, profile, or pixel format falls outside the safe set (e.g. unusual profile like High 4:4:4 Predictive, or `yuv444p`), re-encode video to `libx264` regardless of audio codec status.
+### Execution Strategy Matrix
+| Video Stream Qualifies? | Audio Stream Qualifies? | Strategy | Video Arg | Audio Arg | Typical Duration (30 GB) |
+|---|---|---|---|---|---|
+| H.264/HEVC + Safe Profile + `yuv420p` | Whitelisted (`aac`, `ac3`, `eac3`) | **Fast Remux** | `-c:v copy` | `-c:a copy` | **< 30 seconds** (I/O bound) |
+| H.264/HEVC + Safe Profile + `yuv420p` | Not whitelisted (DTS, Vorbis, etc.) | **Partial Transcode** | `-c:v copy` | `-c:a aac -b:a 192k` | **1–3 minutes** |
+| Outside safe set (e.g. `yuv444p`, non-standard) | Any | **Full Transcode** | `-c:v libx264 -pix_fmt yuv420p` | Whitelisted copy or AAC | **30–90+ minutes** (CPU bound) |
 
-**Critical rule discovered during Phase 1 testing:** never use `-c:a copy` for an audio codec that hasn't been explicitly verified as MP4-compatible. `ffmpeg -c copy` will happily copy an unsupported codec's raw bytes into an MP4 container and mislabel them with the `mp4a` tag. This does **not** fail — it exits 0 and produces a file that appears valid (correct size, plays fine in permissive players like VLC that inspect the actual bitstream) but is broken in strict players (e.g. Windows Media Player) that trust the container's codec label and fail to decode it. Verified with a real MKV containing Vorbis audio: remux "succeeded," but produced an unplayable-in-some-players file. Exit code alone is therefore not sufficient validation — codec compatibility must be checked *before* deciding to copy, not inferred from whether the copy command succeeded.
-
----
-
-## 2. File Size Ceiling & Storage Bounds
-
-* **Maximum File Size:** **30 GB**
-* **Justification:** High-bitrate 4K UHD remuxes and 1080p bluray rips commonly range between 15 GB and 25 GB. A 30 GB ceiling accommodates the 99th percentile of target media files while leaving overhead for metadata and processing.
-
-### Upload Strategy (determines scratch space math)
-Chunked/resumable uploads write each incoming chunk by **appending directly to a single growing file on disk** (tus-protocol style), rather than storing chunks as separate files to be merged later. This avoids a second full-size temporary copy during the upload phase itself — merging separately-stored chunks would require holding both the chunk set *and* the merged file on disk simultaneously, roughly doubling upload-phase storage for no benefit.
-
-### Scratch Space Calculation
-| Component | Size | Reasoning |
-|---|---|---|
-| Source file (post-upload) | 30 GB | Full uploaded MKV, retained until job completes |
-| Output file (in progress) | up to 30 GB | Being written by ffmpeg; sized ~= source for remux, smaller for transcode |
-| Working buffer | 5 GB | ffprobe temp data, partial/interrupted job remnants, safety margin |
-| **Total per job** | **~65 GB** | |
-
-With a concurrency limit of 1–2 simultaneous jobs (see §0), worst-case scratch space is **~130 GB**. This must be checked against available disk before a job is accepted (see §3).
+> [!IMPORTANT]
+> **Audio Copy Trap & Exit Code Rule:** Never use `-c:a copy` on an audio codec that has not been explicitly whitelisted. FFmpeg will copy unsupported bitstreams into an MP4 container and mislabel them with the `mp4a` fourcc code. FFmpeg exits with code 0, but the resulting file is corrupt in strict decoders (e.g., Windows Media Player, QuickTime). Compatibility must be verified by `ffprobe` prior to execution.
 
 ---
 
-## 3. Failure Modes & Edge Cases
+## 2. Storage Engineering & Scratch Math
 
-| Failure Mode | Root Cause | System-Level Impact | Mitigation Strategy |
+* **Maximum File Size Supported:** **30 GB** (covers 99th percentile 4K remuxes and high-bitrate Blu-ray rips).
+* **Direct Local Mode**: Requires **Source Size + Projected Output + 5 GB Buffer**.
+* **Upload Mode (Tus-style Single File Append)**: Ingestion writes incoming chunks by appending directly to a growing file on disk (`fs.createWriteStream({ flags: 'a' })`), completely eliminating duplicate merged chunk copies.
+
+### Scratch Space Gate Calculation
+Native OS disk interrogation via `fs.promises.statfs` verifies that free disk space meets safety thresholds before any job is accepted:
+
+$$\text{Required Scratch Space} = \text{Source Size} + \min(\text{Source Size}, 30\text{ GB}) + 5\text{ GB safety margin}$$
+
+For a 30 GB file, the system asserts at least **65 GB** of contiguous free space on the destination volume, rejecting execution with a structured `DiskSpaceError` (HTTP 400) if insufficient.
+
+---
+
+## 3. Timeout & Stall Architecture
+
+A static 30-minute timeout ceiling is fundamentally inadequate for 30 GB files when CPU re-encoding (`libx264`) is required. The execution engine uses a **two-tier watchdog**:
+1. **Activity Stall Heartbeat (3-minute window)**: FFmpeg is invoked with `-progress pipe:1`. Real-time progress metrics (`out_time_us`, `frame`, `speed`) are parsed via `readline`. If no progress update is received for 180 seconds, the job is flagged as deadlocked and aborted.
+2. **Dynamic Adaptive Ceiling**:
+   * Remux jobs: $5 \text{ minutes}$.
+   * Transcode jobs: $\max(60\text{ min}, 1.5 \times \text{media duration})$.
+3. **Escalation & Cleanup**:
+   * On cancellation or timeout: Process receives `SIGTERM`, waits 5 seconds for graceful shutdown, then escalates to `SIGKILL`.
+   * The partial/orphaned `.mp4` file is immediately unlinked from disk to prevent silent storage leaks.
+
+---
+
+## 4. Native Windows OS Integration
+
+To support a seamless desktop experience directly from the web dashboard:
+* **Native Explorer File & Folder Pickers**:
+  * Invokes `.NET OpenFileDialog` and `FolderBrowserDialog` in Single-Threaded Apartment (`-STA`) mode.
+  * Encoded via Base64 UTF-16LE (`-EncodedCommand`) to avoid command-line quoting bugs and non-interactive `stdin` EOF premature closures.
+* **Explorer Reveal**:
+  * Uses `Start-Process explorer.exe -ArgumentList '/select,"<path>"'` with normalized backslashes (`\`).
+  * Tolerates Windows Explorer's delegation exit code `1` via `{ reject: false }` and provides an automatic detached `spawn` fallback.
+
+---
+
+## 5. Failure Modes, Mitigations & Structured Errors
+
+| Failure Mode | Root Cause | Impact | Mitigation Strategy |
 |---|---|---|---|
-| **Mid-Transfer Drop** | Network disconnect or timeout at high byte offsets (e.g., 22 GB / 25 GB). | Incomplete file left on disk; wasted bandwidth if restarted from byte 0. | Chunked, resumable uploads (tus protocol pattern) — resume from last confirmed byte offset. |
-| **Invalid/Corrupted Payload** | Non-video binary uploaded with `.mkv` extension, or broken bitstream. | FFmpeg crashes, hangs indefinitely, or spawns a zombie child process. | Pre-execution validation via `ffprobe` JSON stream check before the job is queued. |
-| **Process Hang / Deadlock** | Broken video frames cause FFmpeg to stall waiting for I/O. | Worker process blocked indefinitely; job queue starves. | Hard timeout wrapper: **10x the fast-path target duration** (e.g., 5 min cap for remux, 30 min cap for full transcode). On timeout: send `SIGTERM`, wait 5s for graceful exit, then `SIGKILL` if still alive. Always delete partial output file after a kill — otherwise disk space leaks silently over repeated failures. |
-| **Disk Exhaustion (ENOSPC)** | Multiple concurrent large conversions exceed available local storage. | `write()` calls fail with `ENOSPC`; without explicit handling, this can leave the Node process or job state inconsistent (NOT an OS crash — the OS itself handles this fine, it's an application-level failure to plan for). | Pre-flight disk-space check gate before accepting a job (require free space >= projected job size from §2 math). Enforce concurrency limit of 1–2 active jobs. |
-| **Out-Of-Memory (OOM)** | Server buffers entire stream or large chunks into Node.js heap instead of streaming. | Node.js process crashes (`JavaScript heap out of memory`). | Strict stream piping (`fs.createReadStream` / `createWriteStream`, or piping directly into ffmpeg's stdin) — never buffer a full file in memory. |
-| **Silent Bad Output (codec/container mismatch)** | `-c copy` used on an audio codec not natively supported by MP4 (e.g. Vorbis). FFmpeg copies the raw bytes and mislabels them with the `mp4a` tag rather than failing. | Exit code 0, plausible file size — job appears successful. File is unplayable or has no audio in strict players (confirmed: Windows Media Player rejects it); permissive players (confirmed: VLC) decode it correctly by inspecting the bitstream directly, masking the bug during casual testing. | Never treat exit code 0 as sufficient proof of a valid output. Explicitly whitelist audio codecs eligible for `-c:a copy` (AAC, AC-3, E-AC-3 only) at the routing-decision stage, before ffmpeg runs — do not infer compatibility from the copy command's success. |
+| **Corrupt Payload / Broken Bitstream** | Non-video binary uploaded with `.mkv` extension, or truncated download. | FFmpeg hangs, deadlocks, or crashes. | Pre-flight `ffprobe` inspection before enqueueing. Structured `CorruptMediaError` with expandable technical logs in UI. |
+| **Disk Exhaustion (`ENOSPC`)** | Large conversion runs out of scratch disk during write. | Partial files, potential corruption. | Pre-flight `statfs` disk gate requiring full scratch calculation before queueing. |
+| **Memory Bloat / Heap OOM** | Buffering video streams into Node heap. | Process crash. | Strict stream piping (`fs.createReadStream` / `createWriteStream`) and Range-based HTTP 206 streaming. |
+| **Silent Audio Mismatch** | Copying Vorbis/DTS into MP4 container. | Exit code 0, but unplayable audio in strict players. | Strict audio whitelisting (`aac`, `ac3`, `eac3`) prior to execution. Post-conversion `ffprobe` stream validation. |

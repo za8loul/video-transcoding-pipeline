@@ -1,0 +1,25 @@
+{
+  "name": "large_files_converter",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "start": "node src/server.js",
+    "test": "node scripts/test_queue.js && node scripts/test_executor.js && node scripts/test_server.js"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/za8loul/video-transcoding-pipeline.git"
+  },
+  "keywords": [],
+  "author": "Abdullah Zaghloul",
+  "license": "MIT",
+  "type": "module",
+  "bugs": {
+    "url": "https://github.com/za8loul/video-transcoding-pipeline/issues"
+  },
+  "homepage": "https://github.com/za8loul/video-transcoding-pipeline#readme",
+  "dependencies": {
+    "execa": "^10.0.1"
+  }
+}
