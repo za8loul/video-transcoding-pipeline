@@ -178,6 +178,26 @@ npm test
 | `/api/jobs/:id` | `GET` / `DELETE` | Queries job state or cancels an active transcode with disk cleanup. |
 | `/api/uploads` | `POST` / `HEAD` / `PATCH` | Tus-style resumable chunked upload protocol. |
 
+## 🗺️ Roadmap & Future Enhancements
+
+### ⚡ Performance & Hardware Acceleration
+- [ ] **GPU-Accelerated Transcoding**: Integrate automatic hardware encoder detection (`h264_nvenc` for Nvidia, `h264_qsv` for Intel, `h264_amf` for AMD) for 10x faster encoding on non-remuxable files.
+- [ ] **Multi-Threaded Remuxing**: Optimize disk I/O buffers and stream piping for NVMe/SSD high-throughput workloads.
+
+### 🎬 Media & Audio Fidelity
+- [ ] **Multi-Track Audio Selection**: Allow users to inspect available audio tracks and select their preferred language or commentary track.
+- [ ] **Subtitle Passthrough & Extraction**: Convert soft text subtitles (SRT, ASS) to MP4-compatible `mov_text` tracks.
+- [ ] **Stereo Downmixing**: Optional downmix toggle for 7.1/5.1 audio streams to high-bitrate AAC stereo for broader mobile compatibility.
+
+### 🔄 Automation & Batch Workflow
+- [ ] **Batch File Queue**: Support selecting or dropping multiple MKV files at once for sequential batch processing.
+- [ ] **Auto-Watch Folder**: Background directory monitor to automatically transcode any new `.mkv` files dropped into a designated folder.
+
+### 🛡️ Resilience & Desktop Polish
+- [ ] **Queue Persistence**: Store queue state in a lightweight SQLite database (`node:sqlite`) for automatic crash recovery after system reboots.
+- [ ] **Native Windows Notifications**: Trigger desktop toast alerts when long-running background conversions complete.
+- [ ] **Silent Background Launcher**: Single-click desktop shortcut (`.bat` / background runner) without keeping a terminal window open.
+
 ---
 
 ## License
